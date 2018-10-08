@@ -1,9 +1,5 @@
 
 # coding: utf-8
-
-# In[145]:
-
-
 from __future__ import print_function
 
 import pylab
@@ -14,11 +10,15 @@ from scipy import optimize
 import spectrum
 import numpy
 import optparse
-# calculates intersectionarea between the pixel and the fiber
 import PolygonIntersect
-
 from matplotlib import pyplot as plt
-
+import spectrum
+from astropy.io import ascii
+from astropy.table import Table
+import os
+import glob
+import numpy as np
+import srebin
 
 # In[146]:
 
@@ -172,7 +172,6 @@ def dms2deg(dms):
 # In[147]:
 
 
-import srebin
 def get_rebinned(hdu, extensions=['spectrum'], start = 3494.74, step =  1.9858398, stop = 5500.):
     #start,stop = 3503.9716796, 5396.477
     N = int( np.ceil( (stop - start)/step ) )
@@ -200,46 +199,59 @@ def get_rebinned(hdu, extensions=['spectrum'], start = 3494.74, step =  1.985839
 # In[148]:
 
 
-import spectrum
-from astropy.io import ascii
-from astropy.table import Table
-import os
-import glob
-import numpy as np
-
 
 # In[149]:
-
 
 FIBERD = 1.5
 fiberA = pi*(FIBERD/2.)**2.
 
 RA0 = None 
 DEC0 = None
-pa = - 20.
+pa = 264.116951
 FIBERD = 1.
 nx = None
 ny = None
 pixelsize = 1.
 
 
+import argparse
 
-fiberpos = "hetdex/dithall.use"
-ifuslot = "022"
+parser = argparse.ArgumentParser(description='Build a hetdex cube.')
+parser.add_argument('--basepath', default="/work/03946/hetdex/maverick/red1/reductions")
+parser.add_argument('--pa', type=float, default=0.,
+                            help='Position angle for cube.')
+parser.add_argument('--shots_list', type=str, default="",
+                            help='List of actual shots to use.')
+parser.add_argument('dither_use', type=str,
+                            help='Dither.use file')
+parser.add_argument('ifuslot', type=str, default = "022",
+        help='IFUslot to create cube for. ')
 
-basepath = "hetdex/reductions"
+args = parser.parse_args()
+
+pa=args.pa
+fiberpos = args.dither_use
+#"/work/04287/mxhf/maverick/sci/panacea/shifts/deep_33.182404_262.562869.use"
+ifuslot = args.ifuslot
+#"022"
+basepath = args.basepath
+#"/work/03946/hetdex/maverick/red1/reductions"
 prefix = ""
-
 extension = "sky_subtracted"
 
 
+shots = []
+if args.shots_list != "":
+    with open(args.shots_list, 'r') as f:
+        ll = f.readlines()
+    for l in ll:
+        if l.strip().startswith("#") or l.strip() == "":
+            continue
+        shots.append(l.strip())
 # In[150]:
 
 
-class Options():
-    def __init__(self):
-        self.o = "outcube.fits"
-options = Options()
+
 
 
 # In[151]:
@@ -257,47 +269,64 @@ fibers = Table(names=["count","ra", "dec"])
 count = 0
 fid = -1
 
-t = ascii.read(fiberpos)
+print("Reading {}".format(fiberpos))
+t = ascii.read(fiberpos,format="fixed_width")
+
+import pickle
 
 for r in t:
     mf = prefix + r["multifits"]
     _ifuslot = r["ifuslot"].replace("ifu","")
     if not ifuslot == _ifuslot:
         continue
-        
     tt = mf.split("_")
     fiberid = int( tt[5][:3] ) - 1
-    
     exp = r["exposure"]
+    night = r["night"]
+    shotid = "{:03d}".format( r["shotid"] )
+    shot =  "{}v{}".format(night,shotid)
+    if len(shots) > 1  and not shot in shots:
+        print("Skipping {} as it is not listed in shot list (--shots_list).".format(shot))
+        continue
     filename = mf[:-8] + ".fits"
     id = int(tt[1])
     x = r["ra"]
     y = r["dec"]
-    
     date = r["timestamp"][:8]
-    
     filename = mf[:-8] + ".fits"
+    s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
+    path = os.path.join( basepath, s )
     # read spectrum if it was not read before
-    if not filename in spectra:
-        print("Read & rebin:", filename)
-        if not filename in filebase:
-            pattern = os.path.join( basepath, "{}/virus/virus0000???/exp??/virus/multi*.fits".format(date) )
-            print(pattern)
-            ff = glob.glob( pattern )
-            for f in ff:
-                __,t = os.path.split(f)
-                filebase[t] = f
+    if not path in spectra:
+        rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
+        rebin_filename = filename.replace(".fits","_rebin.pickle")
+        rebin_file_path = os.path.join(rebin_path,rebin_filename)
+        if os.path.exists( rebin_file_path ):
+            # already rebinned?
+            with open( rebin_file_path , 'rb') as f:
+                print("Found previously rebinned data {}".format( rebin_file_path )) 
+                # The protocol version used is detected automatically, so we do not
+                # have to specify it.
+                lw, rebinned = pickle.load(f)
+                wlgrid = lw
+        else:
+            print("Read & rebin:", path)
+            hdu = fits.open(path)
+            lw, rebinned = get_rebinned(hdu, extensions=[extension], start = 3494.74, step =  1.9858398, stop = 5500.)
+            if type(wlgrid) == type(None):
+                wlgrid = lw
+            try:
+                os.makedirs(rebin_path)
+            except:
+                pass
+            with open(os.path.join(rebin_path,rebin_filename), 'wb') as f:
+                # Pickle the 'data' dictionary using the highest protocol available.
+                pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
 
-        hdu = fits.open(filebase[filename])
-        lw, rebinned = get_rebinned(hdu, extensions=[extension], start = 3494.74, step =  1.9858398, stop = 5500.)
-        if type(wlgrid) == type(None):
-            wlgrid = lw
-        spectra[filename] = rebinned
-
+        spectra[path] = rebinned
 
     fibers.add_row([count,x,y])
-    allspec.append(rebinned[extension][fiberid,:])
-    
+    allspec.append(spectra[path][extension][fiberid,:])
     count += 1
 
 
@@ -573,9 +602,6 @@ wstart = wlgrid[0]
 wstep  = wlgrid[1]-wlgrid[0]
 
 
-# In[157]:
-
-
 ###############################################################################
 # save output
 ###############################################################################
@@ -587,27 +613,14 @@ yc = -yy[0]/pixelsize + 1
 
 h2d = create_2D_header(xc, yc, RA0, DEC0, pixelsize)
 hdu = fits.PrimaryHDU(W.reshape(X.shape),h2d)
-hdu.writeto("pixel_weights.fits",overwrite=True)
+hdu.writeto("pixel_weights.fits.zg",overwrite=True)
 
 h = create_I_header()
 hdu = fits.PrimaryHDU(I,h)
-hdu.writeto("fiber_weights.fits",overwrite=True)
+hdu.writeto("fiber_weights.fits.gz",overwrite=True)
 
 h = create_3D_header(xc, yc, RA0, DEC0, pixelsize,wstart,wstep)
 #if options.normexptime:
 #    h.add_history("Cube data has been normalized by its exposure time.")
 hdu = fits.PrimaryHDU(cube,h)
-hdu.writeto(options.o,overwrite=True)
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
+hdu.writeto("outcube_{}.fits.gz".format(ifuslot),overwrite=True)
