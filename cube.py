@@ -196,34 +196,55 @@ def get_rebinned(hdu, extensions=['spectrum'], start = 3494.74, step =  1.985839
     return lw, rebinned
 
 
-# In[148]:
+import sys
+from astropy.table import Column, vstack
+from astropy.io import ascii
+
+def read_shotlist(shotlist_file):
+    return Table( ascii.read(shotlist_file), names="shots")
+
+def combine_dithall(shotlist, shifts_dir):
+    tables = []
+    for shot in shotlist["shots"]:
+            dithall_filename = "{}/dithall.use".format(shot)
+
+            print("Reading {}".format( os.path.join(shifts_dir, dithall_filename) ))
+            t = ascii.read(dithall_filename)
+            cn = Column(name="night", data=[night]*len(t) )
+            cs = Column(name="shotid", data=[shotid]*len(t) )
+            t.add_column(cs,index=0)
+            t.add_column(cn,index=0)
+            tables.append(t)
+
+    T = vstack(tables)
+    #T.write(out_file, overwrite=True, format="ascii.fixed_width")
+    return T
 
 
-
-# In[149]:
-
-FIBERD = 1.5
-fiberA = pi*(FIBERD/2.)**2.
 
 RA0 = None 
 DEC0 = None
-pa = 264.116951
-FIBERD = 1.
+pa = - (360.-264.116951)
+FIBERD = 1.5
 nx = None
 ny = None
-pixelsize = 1.
+pixelsize = .75
 
+fiberA = pi*(FIBERD/2.)**2.
 
 import argparse
 
 parser = argparse.ArgumentParser(description='Build a hetdex cube.')
-parser.add_argument('--basepath', default="/work/03946/hetdex/maverick/red1/reductions")
+#parser.add_argument('--basepath', default="/work/03946/hetdex/maverick/red1/reductions")
+parser.add_argument('--basepath', default="./reductions")
 parser.add_argument('--pa', type=float, default=0.,
                             help='Position angle for cube.')
 parser.add_argument('--shots_list', type=str, default="",
                             help='List of actual shots to use.')
+parser.add_argument('--shifts_dir', type=str, default="shifts",
+                            help='Directory that contains the astrometric solutions for each shot.')
 parser.add_argument('dither_use', type=str,
-                            help='Dither.use file')
+                            help='Combined dithall use file.')
 parser.add_argument('ifuslot', type=str, default = "022",
         help='IFUslot to create cube for. ')
 
@@ -238,24 +259,11 @@ basepath = args.basepath
 #"/work/03946/hetdex/maverick/red1/reductions"
 prefix = ""
 extension = "sky_subtracted"
+#extension = "spectrum"
 
 
-shots = []
-if args.shots_list != "":
-    with open(args.shots_list, 'r') as f:
-        ll = f.readlines()
-    for l in ll:
-        if l.strip().startswith("#") or l.strip() == "":
-            continue
-        shots.append(l.strip())
-# In[150]:
-
-
-
-
-
-# In[151]:
-
+shotlist = read_shotlist(args.shots_list)
+t = combine_dithall(shotlist, shifts_dir)
 
 # read dithall.use
 filebase = {}
@@ -264,16 +272,12 @@ exposure_times = []
 allspec = []
 
 wlgrid = None
-fibers = Table(names=["count","ra", "dec"])
+fibers = Table(names=["count","ra", "dec", "night", "shotid", "exp"])
 
 count = 0
 fid = -1
 
-print("Reading {}".format(fiberpos))
-t = ascii.read(fiberpos,format="fixed_width")
-
 import pickle
-
 for r in t:
     mf = prefix + r["multifits"]
     _ifuslot = r["ifuslot"].replace("ifu","")
@@ -285,8 +289,7 @@ for r in t:
     night = r["night"]
     shotid = "{:03d}".format( r["shotid"] )
     shot =  "{}v{}".format(night,shotid)
-    if len(shots) > 1  and not shot in shots:
-        print("Skipping {} as it is not listed in shot list (--shots_list).".format(shot))
+    if len(shots) >= 1  and (not (shot in shots)):
         continue
     filename = mf[:-8] + ".fits"
     id = int(tt[1])
@@ -296,6 +299,7 @@ for r in t:
     filename = mf[:-8] + ".fits"
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     path = os.path.join( basepath, s )
+
     # read spectrum if it was not read before
     if not path in spectra:
         rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
@@ -325,7 +329,7 @@ for r in t:
 
         spectra[path] = rebinned
 
-    fibers.add_row([count,x,y])
+    fibers.add_row([count,x,y, int(night), int(shotid), int(exp[3:]) ])
     allspec.append(spectra[path][extension][fiberid,:])
     count += 1
 
@@ -335,10 +339,14 @@ for r in t:
 
 # In[152]:
 
+dither_offsets = [(0.,0.),(1.270,-0.730),(1.270,0.730)]
+
 
 ###############################################################################
 # determine a pixel grid
 ###############################################################################
+
+dither_offsets = [(0.,0.),(1.270,-0.730),(1.270,0.730)]
 
 if RA0 == None or DEC0 == None:
     RA0,DEC0 = numpy.mean(fibers["ra"]), numpy.mean(fibers["dec"])
@@ -376,9 +384,9 @@ PLOT = False
 if PLOT:
     # plotting
     s = plt.subplot() 
-    for p in pixels:
-        xx,yy = pixel(p[1],p[2], pixelsize)
-        s.fill( xx, yy, facecolor='none',linewidth=0.2 )
+    #for p in pixels:
+        #    xx,yy = pixel(p[1],p[2], pixelsize)
+    #    s.fill( xx, yy, facecolor='none',linewidth=0.2 )
 
     for f in zip( fxx,fyy ):
         xx,yy = circle(f[0],f[1], FIBERD)
@@ -409,7 +417,7 @@ for ip in pix_range:
 
     px,py = p[1],p[2]
     #calculate distances of all fibers to the current pixel
-    dd_sq = (fxx-px)**2. + (fyy-py)**2.    
+    dd_sq = (fxx-px)**2. + (fyy-py)**2. 
 
     #find which fibers could possibly intersect with the current pixel
     # in the intersection filter, only fibers which overlap the pixel are considered.
@@ -424,27 +432,28 @@ for ip in pix_range:
         for ifib in fib_range[ii]:
             fx = fxx[ifib]
             fy = fyy[ifib]
-            if True:
-                NNN += 1
-                fpxx,fpyy = circle(fx,fy,FIBERD)
-                fiber_poly = list( zip(fpxx,fpyy) )
-                fiber_array = PolygonIntersect.toPointsArray(fiber_poly)
-                pixel_array = PolygonIntersect.toPointsArray(pixel_poly)
-                # calculate intersection area
-                iA = PolygonIntersect.intersectionArea(fiber_array, pixel_array)
-                # Now, the flux of a given fiber (at a given wavelength)
-                # will be assigned to a pixel weighted by the fraction of the 
-                # total fiber area that is overlapping with the pixel.
-                I[ifib,ip]  = iA#/fiberA
 
+            NNN += 1
+            fpxx,fpyy = circle(fx,fy,FIBERD)
+            fiber_poly = list( zip(fpxx,fpyy) )
+            fiber_array = PolygonIntersect.toPointsArray(fiber_poly)
+            pixel_array = PolygonIntersect.toPointsArray(pixel_poly)
+            # calculate intersection area
+            iA = PolygonIntersect.intersectionArea(fiber_array, pixel_array)
+            # Now, the flux of a given fiber (at a given wavelength)
+            # will be assigned to a pixel weighted by the fraction of the 
+            # total fiber area that is overlapping with the pixel.
+            I[ifib,ip]  = iA#/fiberA
+
+        
 
 plot_count = 0.
 for ip in pix_range:
-    #PLOT = (ip > 395) and (ip < 400)
+    #PLOT = (ip > 1020) and (ip < 1025)
     PLOT = False
     if PLOT:
         print("pixel ", ip)
-        s = pylab.axes() 
+        s = pylab.axes()
         p = pixels[ip]
         px,py = p[1],p[2]
         s.plot([px],[py],'s')
@@ -452,22 +461,30 @@ for ip in pix_range:
         pixel_poly = zip(ppxx,ppyy)
         s.fill( ppxx,ppyy, facecolor='none',edgecolor='k',linewidth=0.2 )
 
-        #if any(ii):
-        #   for j in jj[ii]:
-        for ifib in fib_range:
-            if I[ifib,ip] > 0.:
+        px,py = p[1],p[2]
+        #calculate distances of all fibers to the current pixel
+        dd_sq = (fxx-px)**2. + (fyy-py)**2.
+
+        #find which fibers could possibly intersect with the current pixel
+        # in the intersection filter, only fibers which overlap the pixel are considered.
+        # We only look at fibers wich are not further than 
+        # sqrt(2) * pixelsize/2 + fiberd/2 
+        ii = ( dd_sq < (pixelsize/2. *  1.414 + FIBERD/2.)**2. * 3.)
+
+        for ifib in fib_range[ii]:
+            #if I[ifib,ip] > 0.:
                 fx = fxx[ifib]
                 fy = fyy[ifib]
 
                 fpxx,fpyy = circle(fx,fy,FIBERD)
 
-                s.plot([fx],[fy],'.')
-                s.fill( fpxx,fpyy, facecolor='none',edgecolor='b',linewidth=0.2 )
+                s.plot([fx],[fy],'b.')
+                s.fill( fpxx,fpyy, facecolor='k',edgecolor='b',linewidth=0.2 , alpha=I[ifib,ip]+.2 )
                 s.text(fx,fy,'%.2f' % I[ifib,ip])
 
+        plt.axis("equal")
         #s.text(px,py,'%.2f' % W[i])
         pylab.show()
-
 print("Done.")
 
 
@@ -523,46 +540,58 @@ if True:
             ii = W > 0. # prevent zero div error
             imf2[ii] = imf2[ii]/W[ii]
             im2 = imf2.reshape(X.shape)
+
+            PLOT = False 
+            if PLOT:
+                # PLOT
+                X=0.
+                Y=0.
+                vmin=-20.
+                vmax=20.
+                cmap =  plt.cm.jet 
+                s = plt.subplot(111)
+                dd = np.sqrt((fxx-X)**2. + (fyy-Y)**2.)
+                jj = dd < 50.
+                for ifib,fx,fy in zip(fibers["count"][jj], fxx[jj],fyy[jj]):
+                    fpxx,fpyy = circle(fx,fy,FIBERD)
+                    #s.plot([fx],[fy],'k.')
+                    val = np.nanmedian( allspec[int(ifib),100:-100] )
+                    c = (val-vmin)/(vmax-vmin)
+
+                    s.fill( fpxx,fpyy, facecolor=cmap(c),edgecolor='None',linewidth=1.)
+                    #s.text(fx,fy,"{:d}".format(int(ifib) ))
+                plt.show()
+
         else:
             #pp = zeros( len(pixels) )
             Icr = nI.copy()
-            jj = allcrmasks[:,iwl] > 0. # masked fibers (for current wavelength) 
+            jj = ii
 
             for ip in pix_range:
                 ii = nI[:,ip] > 0.   # intersecting fiber apertures with this pixel
-                Icr[ii*jj,ip] = 0.
-                #for ifib in fib_range[ii*jj]:  
-                #   print "1 wlind %5d, wl %8.5f, pixel %6d" % (iwl, wlgrid[iwl], ip), "Rejecting fiber", ifib
-                #   Icr[ifib,ip] = 0.   # disable outlier fibers 
-
                 # ###### PLOTTING ####
-                #PLOT = (ip > 395) and (ip < 400)
-                PLOT = False 
+                PLOT = (ip > 1020) and (ip < 1024)
+                #PLOT = False 
                 if PLOT:
-                    s = pylab.axes() 
-                    vmin=0
-                    vmax=500
+                    s = pylab.axes()
+                    vmin=-20.
+                    vmax=20.
                     cmap = pylab.cm.jet
                     for ifib in fib_range:
                         if nI[ifib,ip] > 0.:
                             fx = fxx[ifib]
                             fy = fyy[ifib]
-
                             fpxx,fpyy = circle(fx,fy,FIBERD)
-
-                            s.plot([fx],[fy],'.')
+                            s.plot([fx],[fy],'k.')
                             val = allspec[ifib,iwl]
                             c = (val-vmin)/(vmax-vmin)
+                            print(val)
                             s.fill( fpxx,fpyy, facecolor=cmap(c),edgecolor='b',linewidth=1. )
                             s.text(fx,fy,'%.2f' % nI[ifib,ip])
-                    
-                            if allcrmasks[ifib,iwl] > 0.: # outlier fibers
-                                print( "2 wlind %5d, wl %8.2f, pixel %6d" % (iwl, wlgrid[iwl], ip), "Rejecting fiber", ifib )
-                                s.text(fx,fy,'X',fontsize=20)
 
                     p = pixels[ip]
                     px,py = p[1],p[2]
-                    s.plot([px],[py],'s')
+                    s.plot([px],[py],'ks')
                     ppxx,ppyy = pixel(px,py,pixelsize)
                     pixel_poly = zip(ppxx,ppyy)
                     s.fill( ppxx,ppyy, facecolor='none',edgecolor='k',linewidth=0.2 )
@@ -576,20 +605,6 @@ if True:
             nIcr=Icr/fiberA
             ITcr = nIcr.transpose()
 
-            # add to all pixel the fiber fluxes qeighted by ther fractional overlap with a respective pixel
-            im2crrej = ITcr.dot(allspec[:,iwl])
-
-            # correct for the pixel coverage
-            ii = W > 0. # prevent zero div error
-            im2crrej[ii] = im2crrej[ii]/W[ii]
-        
-            # correct for "missing" flux due to cr rejection    
-            crnorm = (ITcr.dot(mm)/IT.dot(mm))
-            ii = crnorm > 0.
-            im2crrej[ii] = im2crrej[ii]/crnorm[ii]
-
-            im2crrej = im2crrej.reshape(X.shape)
-            im2 = im2crrej
 
         cube[iwl] = im2
 
@@ -613,7 +628,7 @@ yc = -yy[0]/pixelsize + 1
 
 h2d = create_2D_header(xc, yc, RA0, DEC0, pixelsize)
 hdu = fits.PrimaryHDU(W.reshape(X.shape),h2d)
-hdu.writeto("pixel_weights.fits.zg",overwrite=True)
+hdu.writeto("pixel_weights.fits.gz",overwrite=True)
 
 h = create_I_header()
 hdu = fits.PrimaryHDU(I,h)
