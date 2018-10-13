@@ -201,13 +201,12 @@ from astropy.table import Column, vstack
 from astropy.io import ascii
 
 def read_shotlist(shotlist_file):
-    return Table( ascii.read(shotlist_file), names=["shots"])
+    return Table(ascii.read("shots.txt", format="fast_no_header"), names=["shots"])
 
 def combine_dithall(shotlist, shifts_dir):
     tables = []
     for shot in shotlist["shots"]:
             dithall_filename = "{}/dithall.use".format(shot)
-
             filename = os.path.join(shifts_dir, dithall_filename)
             print("Reading {}".format( filename ))
             t = ascii.read(filename)
@@ -219,7 +218,6 @@ def combine_dithall(shotlist, shifts_dir):
             tables.append(t)
 
     T = vstack(tables)
-    #T.write(out_file, overwrite=True, format="ascii.fixed_width")
     return T
 
 
@@ -241,12 +239,12 @@ parser = argparse.ArgumentParser(description='Build a hetdex cube.')
 parser.add_argument('--basepath', default="../reductions")
 parser.add_argument('--pa', type=float, default=0.,
                             help='Position angle for cube.')
-parser.add_argument('shotslist', type=str,
-                            help='List of actual shots to use.')
 parser.add_argument('--shiftsdir', type=str, default="../shifts",
                             help='Directory that contains the astrometric solutions for each shot.')
 parser.add_argument('--dither_use', type=str,
                             help='Combined dithall use file.')
+parser.add_argument('shotslist', type=str,
+                            help='List of actual shots to use.')
 parser.add_argument('ifuslot', type=str, default = "022",
         help='IFUslot to create cube for. ')
 
