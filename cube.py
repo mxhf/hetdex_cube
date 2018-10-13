@@ -201,15 +201,17 @@ from astropy.table import Column, vstack
 from astropy.io import ascii
 
 def read_shotlist(shotlist_file):
-    return Table( ascii.read(shotlist_file), names="shots")
+    return Table( ascii.read(shotlist_file), names=["shots"])
 
 def combine_dithall(shotlist, shifts_dir):
     tables = []
     for shot in shotlist["shots"]:
             dithall_filename = "{}/dithall.use".format(shot)
 
-            print("Reading {}".format( os.path.join(shifts_dir, dithall_filename) ))
-            t = ascii.read(dithall_filename)
+            filename = os.path.join(shifts_dir, dithall_filename)
+            print("Reading {}".format( filename ))
+            t = ascii.read(filename)
+            night, shotid = shot.split("v")
             cn = Column(name="night", data=[night]*len(t) )
             cs = Column(name="shotid", data=[shotid]*len(t) )
             t.add_column(cs,index=0)
@@ -228,7 +230,7 @@ pa = - (360.-264.116951)
 FIBERD = 1.5
 nx = None
 ny = None
-pixelsize = .75
+pixelsize = .5
 
 fiberA = pi*(FIBERD/2.)**2.
 
@@ -236,14 +238,14 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Build a hetdex cube.')
 #parser.add_argument('--basepath', default="/work/03946/hetdex/maverick/red1/reductions")
-parser.add_argument('--basepath', default="./reductions")
+parser.add_argument('--basepath', default="../reductions")
 parser.add_argument('--pa', type=float, default=0.,
                             help='Position angle for cube.')
-parser.add_argument('--shots_list', type=str, default="",
+parser.add_argument('shotslist', type=str,
                             help='List of actual shots to use.')
-parser.add_argument('--shifts_dir', type=str, default="shifts",
+parser.add_argument('--shiftsdir', type=str, default="../shifts",
                             help='Directory that contains the astrometric solutions for each shot.')
-parser.add_argument('dither_use', type=str,
+parser.add_argument('--dither_use', type=str,
                             help='Combined dithall use file.')
 parser.add_argument('ifuslot', type=str, default = "022",
         help='IFUslot to create cube for. ')
@@ -262,8 +264,8 @@ extension = "sky_subtracted"
 #extension = "spectrum"
 
 
-shotlist = read_shotlist(args.shots_list)
-t = combine_dithall(shotlist, shifts_dir)
+shotlist = read_shotlist(args.shotslist)
+t = combine_dithall(shotlist, args.shiftsdir)
 
 # read dithall.use
 filebase = {}
@@ -287,9 +289,9 @@ for r in t:
     fiberid = int( tt[5][:3] ) - 1
     exp = r["exposure"]
     night = r["night"]
-    shotid = "{:03d}".format( r["shotid"] )
+    shotid = "{}".format( r["shotid"] )
     shot =  "{}v{}".format(night,shotid)
-    if len(shots) >= 1  and (not (shot in shots)):
+    if (not (shot in shotlist["shots"])):
         continue
     filename = mf[:-8] + ".fits"
     id = int(tt[1])
@@ -509,7 +511,7 @@ print("Creating cube...")
 # with the help of the intersection matix
 # the pixel values of each wavelength slice are simply the dot product of that matrix (transposed) in the vector
 # of all the fiber values at a give wavelength.
-cube = 1./np.zeros( [allspec.shape[1],ny,nx] )
+cube = np.zeros( [allspec.shape[1],ny,nx] )
 
 W = sum(I,axis=0)/(pixelsize**2.)
 
@@ -628,11 +630,12 @@ yc = -yy[0]/pixelsize + 1
 
 h2d = create_2D_header(xc, yc, RA0, DEC0, pixelsize)
 hdu = fits.PrimaryHDU(W.reshape(X.shape),h2d)
-hdu.writeto("pixel_weights.fits.gz",overwrite=True)
+hdu.writeto("pixel_weights_{}.fits.gz".format(ifuslot),overwrite=True)
 
-h = create_I_header()
-hdu = fits.PrimaryHDU(I,h)
-hdu.writeto("fiber_weights.fits.gz",overwrite=True)
+if False:
+    h = create_I_header()
+    hdu = fits.PrimaryHDU(I,h)
+    hdu.writeto("fiber_weights_{}.fits.gz".format(ifuslot),overwrite=True)
 
 h = create_3D_header(xc, yc, RA0, DEC0, pixelsize,wstart,wstep)
 #if options.normexptime:
