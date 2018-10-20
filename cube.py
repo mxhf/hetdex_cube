@@ -204,7 +204,7 @@ from astropy.table import Column, vstack
 from astropy.io import ascii
 
 def read_shotlist(shotlist_file):
-    return Table(ascii.read("shots.txt", format="fast_no_header"), names=["shots"])
+    return Table(ascii.read(args.shotlist, format="fast_no_header"), names=["shots"])
 
 def combine_dithall(shotlist, shifts_dir):
     tables = []
@@ -255,7 +255,7 @@ parser.add_argument('--write_single_cubes', action="store_true",
 parser.add_argument('--norm_smoothing', type=float, default=0.005,
                             help='Smoothing for cross IFU and cross exposure fiber to fiber normalisation (default 0.05)')
 
-parser.add_argument('shotslist', type=str,
+parser.add_argument('shotlist', type=str,
                             help='List of actual shots to use.')
 parser.add_argument('ifuslot', type=str, default = "022",
         help='IFUslot to create cube for. ')
@@ -274,7 +274,7 @@ extensions = ["sky_subtracted", "sky_spectrum", "fiber_to_fiber"]
 #extension = "spectrum"
 
 
-shotlist = read_shotlist(args.shotslist)
+shotlist = read_shotlist(args.shotlist)
 t = combine_dithall(shotlist, args.shiftsdir)
 
 # read dithall.use
