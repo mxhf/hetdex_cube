@@ -255,10 +255,11 @@ parser.add_argument('--write_single_cubes', action="store_true",
 parser.add_argument('--norm_smoothing', type=float, default=0.005,
                             help='Smoothing for cross IFU and cross exposure fiber to fiber normalisation (default 0.05)')
 
-parser.add_argument('shotlist', type=str,
+parser.add_argument('--ifuslot', type=str, default = "022", nargs='+', metavar='SLOTS',
+        help='IFUslot to create cube for, can pass multiple. ')
+
+parser.add_argument('--shotlist', type=str,
                             help='List of actual shots to use.')
-parser.add_argument('ifuslot', type=str, default = "022",
-        help='IFUslot to create cube for. ')
 
 args = parser.parse_args()
 
@@ -302,7 +303,7 @@ import pickle
 for r in t:
     mf = prefix + r["multifits"]
     _ifuslot = r["ifuslot"].replace("ifu","")
-    if not ifuslot == _ifuslot:
+    if not _ifuslot in args.ifuslot:
         continue
     tt = mf.split("_")
     fiberid = int( tt[5][:3] ) - 1
