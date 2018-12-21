@@ -261,6 +261,9 @@ parser.add_argument('--ifuslot', type=str, default = "022", nargs='+', metavar='
 parser.add_argument('--shotlist', type=str,
                             help='List of actual shots to use.')
 
+parser.add_argument('--global_sky_dir', type=str, default=".",
+                            help='Directory where shot by shot global skys are stored, must follow name convention NIGHTvSHOT.fits.')
+
 args = parser.parse_args()
 
 pa=args.pa
@@ -285,6 +288,7 @@ exposure_times = []
 allspec = []
 sky_spectra = [] # holds for each fiber spectrum
                  # the corresponing amplifier wide sky (median accorss all fibers after correcting for fiber_to_fiber)
+sky_shotids = [] # holds the shot and shotid for each sky spectrum
 wlgrid = None
 names = ["count", "amplifier", "fiberid", "ra", "dec", "shot", "night", "shotid", "exp"]
 dtype = [int, 'U2', int, float, float, 'U12', 'U8', 'U3', 'U6']
@@ -358,15 +362,32 @@ for r in t:
 
 
     sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+    sky_shotids.append( shot )
 
 allspec = np.array(allspec)
 sky_spectra = np.array(sky_spectra)
-global_sky = np.nanmedian( sky_spectra, axis=0 )
+#global_sky = np.nanmedian( sky_spectra, axis=0 )
+
+
+# load global skys
+print("Loading global skys")
+global_sky_dir = args.global_sky_dir
+global_skys = {}
+ff = glob.glob(os.path.join(global_sky_dir, "20??????v???_sky.fits"))
+for f in ff:
+    __,t = os.path.split(f)
+    shotid = t[:12]
+    print("    ", shotid)
+    global_skys[shotid] = fits.getdata(f)
 
 print("Computing exposure to exposure normalisations")
 normalisations = []
-for i in range(len(sky_spectra)):
-    f = UnivariateSpline(wlgrid, sky_spectra[i,:]/ global_sky, s=args.norm_smoothing)
+for sky_spectrum,shotid in zip(sky_spectra, sky_shotids):
+    # protect against nans, giving it a very large value will normalize spectra to close to 0 
+    sky_spectrum[np.isnan(sky_spectrum)] = 1e9 
+
+    global_sky = global_skys[shotid]['counts']
+    f = UnivariateSpline(wlgrid, sky_spectrum/ global_sky, s=args.norm_smoothing)
     normalisations.append(f(wlgrid))
 
 normalisations = np.array(normalisations)
@@ -627,23 +648,23 @@ h = create_3D_header(xc, yc, RA0, DEC0, pixelsize,wstart,wstep)
 for shot in shots:
     print("shot {}".format(shot))
     hdu = fits.PrimaryHDU(W[shot].reshape(X.shape),h2d)
-    hdu.writeto("pixel_weights_{}_{}.fits.gz".format(shot,ifuslot),overwrite=True)
+    hdu.writeto("pixel_weights_{}_{}.fits.gz".format(shot,ifuslot[0]),overwrite=True)
 
     if False:
         h = create_I_header()
         hdu = fits.PrimaryHDU(nI,h)
-        hdu.writeto("fiber_weights_{}.fits.gz".format(ifuslot),overwrite=True)
+        hdu.writeto("fiber_weights_{}.fits.gz".format(ifuslot[0]),overwrite=True)
 
     if args.write_single_cubes:
         #if options.normexptime:
         #    h.add_history("Cube data has been normalized by its exposure time.")
         hdu = fits.PrimaryHDU(cube[shot],h)
-        hdu.writeto("outcube_{}_{}.fits.gz".format(shot,ifuslot),overwrite=True)
+        hdu.writeto("outcube_{}_{}.fits.gz".format(shot,ifuslot[0]),overwrite=True)
 
 
 cc = np.array([cube[shot] for shot in shots] )
 mc = np.median(cc, axis=0)
 
 hdu = fits.PrimaryHDU(mc,h)
-hdu.writeto("outcube_{}_{}.fits.gz".format("median",ifuslot),overwrite=True)
+hdu.writeto("outcube_{}_{}.fits.gz".format("median",ifuslot[0]),overwrite=True)
 
