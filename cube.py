@@ -264,6 +264,9 @@ parser.add_argument('--shotlist', type=str,
 parser.add_argument('--global_sky_dir', type=str, default=".",
                             help='Directory where shot by shot global skys are stored, must follow name convention NIGHTvSHOT.fits.')
 
+parser.add_argument('-o','--fnout', type=str, default="",
+                            help='Filename for output cube.')
+
 args = parser.parse_args()
 
 pa=args.pa
@@ -330,9 +333,19 @@ for r in t:
     # read spectrum if it was not read before
     if not path in spectra:
         rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
+
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
-        if os.path.exists( rebin_file_path ) and not args.force_rebin:
+        pca_rebin_file_path = os.path.join(rebin_path,"pca_" + rebin_filename)
+        if os.path.exists( pca_rebin_file_path ) and not args.force_rebin:
+            # already rebinned?
+            with open( pca_rebin_file_path , 'rb') as f:
+                print("Found previously rebinned AND PCA SKY SUBTRACTED {}".format( pca_rebin_file_path )) 
+                # The protocol version used is detected automatically, so we do not
+                # have to specify it.
+                lw, rebinned = pickle.load(f)
+                wlgrid = lw
+        elif os.path.exists( rebin_file_path ) and not args.force_rebin:
             # already rebinned?
             with open( rebin_file_path , 'rb') as f:
                 print("Found previously rebinned data {}".format( rebin_file_path )) 
@@ -666,5 +679,9 @@ cc = np.array([cube[shot] for shot in shots] )
 mc = np.median(cc, axis=0)
 
 hdu = fits.PrimaryHDU(mc,h)
-hdu.writeto("outcube_{}_{}.fits.gz".format("median",ifuslot[0]),overwrite=True)
+
+
+if args.fnout == "":
+    args.fnout = "outcube_{}_{}.fits.gz".format("median",ifuslot[0])
+hdu.writeto(args.fnout,overwrite=True)
 
