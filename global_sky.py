@@ -128,7 +128,11 @@ import pickle
 def amp(x):
     return x[18:20]
 
+
 camp = map(amp, t["multifits"]) 
+
+camp = list(camp)
+
 t.add_column(Column(camp, name='amp') )
 
 
@@ -166,7 +170,7 @@ for r in ut1:
                 print("Found previously rebinned data {}".format( rebin_file_path )) 
                 # The protocol version used is detected automatically, so we do not
                 # have to specify it.
-                lw, rebinned = pickle.load(f)
+                lw, rebinned = pickle.load(f, encoding='iso-8859-1')
                 wlgrid = lw
         else:
             print("Read & rebin:", path)
@@ -193,7 +197,7 @@ per_shot_sky_spectra = {}
 ut2 = table.unique(t, keys=['night', 'shotid'])
 for r in ut2:
     ii = ( ut1['night'] == r['night']) * (ut1['shotid'] == r['shotid'])
-    ff = np.nanmedian(sky_spectra[ii],axis=0)
+    ff = np.nanmedian(per_amp_sky_spectra[ii],axis=0)
     sout = Table([lw, ff], names=['wavelength', 'counts'], dtype=[float,float])
     sout.write("{}v{}_sky.fits".format(r['night'], r['shotid']), format="fits")
     
