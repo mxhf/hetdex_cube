@@ -133,38 +133,36 @@ camp = map(amp, t["multifits"])
 
 camp = list(camp)
 
+
 t.add_column(Column(camp, name='amp') )
-
-
 ut1 = table.unique(t, keys=['night', 'shotid', 'exposure', 'ifuslot', 'amp'])
 for r in ut1:
     mf = prefix + r["multifits"]
+
     #_ifuslot = r["ifuslot"].replace("ifu","")
-    #tt = mf.split("_")
-    #fiberid = int( tt[5][:3] ) - 1
-    #amplifier = mf[-10:-8]
+
     exp = r["exposure"]
     night = r["night"]
     shotid = "{}".format( r["shotid"] )
     shot =  "{}v{}".format(night,shotid)
     if (not (shot in shotlist["shots"])):
         continue
-    filename = mf[:-8] + ".fits"
-    #id = int(tt[1])
-    #x = r["ra"]
-    #y = r["dec"]
-    #date = r["timestamp"][:8]
-    filename = mf[:-8] + ".fits"
+
+    amp = mf[-10:-8]
+    ifuslot = mf[-14:-11]
+    filename = "multi_???_{}_???_{}.fits".format(ifuslot, amp)
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     #ff.append(filename)
     path = os.path.join( basepath, s )
-
+    
     # read spectrum if it was not read before
     if not path in spectra:
         rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
-        if os.path.exists( rebin_file_path ) and not args.force_rebin:
+        print(rebin_file_path)
+        break
+        if os.path.exists( rebin_file_path ) and not force_rebin:
             # already rebinned?
             with open( rebin_file_path , 'rb') as f:
                 print("Found previously rebinned data {}".format( rebin_file_path )) 
@@ -172,6 +170,8 @@ for r in ut1:
                 # have to specify it.
                 lw, rebinned = pickle.load(f, encoding='iso-8859-1')
                 wlgrid = lw
+            
+                per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
         else:
             print("Read & rebin:", path)
             if not os.path.exists( path ):
@@ -189,7 +189,7 @@ for r in ut1:
                     # Pickle the 'data' dictionary using the highest protocol available.
                     pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
 
-    per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+                per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
 
 per_amp_sky_spectra = np.array(per_amp_sky_spectra)
 per_shot_sky_spectra = {}
@@ -200,4 +200,3 @@ for r in ut2:
     ff = np.nanmedian(per_amp_sky_spectra[ii],axis=0)
     sout = Table([lw, ff], names=['wavelength', 'counts'], dtype=[float,float])
     sout.write("{}v{}_sky.fits".format(r['night'], r['shotid']), format="fits")
-    
