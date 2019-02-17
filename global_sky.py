@@ -72,15 +72,6 @@ def combine_dithall(shotlist, shifts_dir):
 
 
 
-RA0 = None 
-DEC0 = None
-FIBERD = 1.5
-nx = None
-ny = None
-pixelsize = .5
-
-fiberA = pi*(FIBERD/2.)**2.
-
 import argparse
 
 parser = argparse.ArgumentParser(description='Build a hetdex cube.')
@@ -96,18 +87,16 @@ parser.add_argument('--shotlist', type=str,
                             help='List of actual shots to use.')
 args = parser.parse_args()
 
+force_rebin = args.force_rebin
 basepath = args.basepath
 prefix = ""
 extensions = ["sky_subtracted", "sky_spectrum", "fiber_to_fiber"]
 
+
 shotlist = read_shotlist(args.shotlist)
+# read dithall.use
 t = combine_dithall(shotlist, args.shiftsdir)
 
-# read dithall.use
-#filebase = {}
-spectra = {}
-#exposure_times = []
-#allspec = []
 per_amp_sky_spectra = [] # holds for each fiber spectrum
                  # the corresponing amplifier wide sky (median accorss all fibers after correcting for fiber_to_fiber)
 wlgrid = None
@@ -124,9 +113,23 @@ import pickle
 # read spectra
 ###############################################################################
 
-
 def amp(x):
     return x[18:20]
+
+
+def multifix(path):
+    h,t = os.path.split(path)
+    #multi_008_093_054_LL.fits 
+    ifu = t[10:13]
+    amp = t[18:20]
+    
+    pattern = os.path.join( h,"multi_???_{}_???_{}.fits".format(ifu,amp) )
+    ff = glob.glob(pattern)
+    if not len(ff) == 1:
+        #print("Error, unable to identify correct multifits for ifu {} and amp {} in {}".format(ifu, amp, h))
+        return path
+    else:
+        return ff[0]
 
 
 camp = map(amp, t["multifits"]) 
@@ -136,10 +139,14 @@ camp = list(camp)
 
 t.add_column(Column(camp, name='amp') )
 ut1 = table.unique(t, keys=['night', 'shotid', 'exposure', 'ifuslot', 'amp'])
+ut1.add_column(Column(ut1['night'] == "0", name='exists', dtype=bool) )
+
+print("len(ut1) = ", len(ut1) )
+
+
 for r in ut1:
     mf = prefix + r["multifits"]
-
-    #_ifuslot = r["ifuslot"].replace("ifu","")
+    print(mf)
 
     exp = r["exposure"]
     night = r["night"]
@@ -154,49 +161,54 @@ for r in ut1:
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     #ff.append(filename)
     path = os.path.join( basepath, s )
-    
-    # read spectrum if it was not read before
-    if not path in spectra:
-        rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
-        rebin_filename = filename.replace(".fits","_rebin.pickle")
-        rebin_file_path = os.path.join(rebin_path,rebin_filename)
-        print(rebin_file_path)
-        break
-        if os.path.exists( rebin_file_path ) and not force_rebin:
-            # already rebinned?
-            with open( rebin_file_path , 'rb') as f:
-                print("Found previously rebinned data {}".format( rebin_file_path )) 
-                # The protocol version used is detected automatically, so we do not
-                # have to specify it.
-                lw, rebinned = pickle.load(f, encoding='iso-8859-1')
-                wlgrid = lw
-            
-                per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
-        else:
-            print("Read & rebin:", path)
-            if not os.path.exists( path ):
-                print("WARNING: Did not find {}".format(path))
-            else:
-                hdu = fits.open(path)
-                lw, rebinned = get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 5500.)
-                if type(wlgrid) == type(None):
-                    wlgrid = lw
-                try:
-                    os.makedirs(rebin_path)
-                except:
-                    pass
-                with open(os.path.join(rebin_path,rebin_filename), 'wb') as f:
-                    # Pickle the 'data' dictionary using the highest protocol available.
-                    pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
 
-                per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+    _path = multifix(path)
+    #if _path != path:
+    #    print("Fixed path for multifits from {} to {}".format(path, _path))
+    path = _path
+
+    rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
+    rebin_filename = filename.replace(".fits","_rebin.pickle")
+    rebin_file_path = os.path.join(rebin_path,rebin_filename)
+
+    if os.path.exists( rebin_file_path ) and not force_rebin:
+        # already rebinned?
+        with open( rebin_file_path , 'rb') as f:
+            print("Found previously rebinned data {}".format( rebin_file_path )) 
+            # The protocol version used is detected automatically, so we do not
+            # have to specify it.
+            #lw, rebinned = pickle.load(f, encoding='iso-8859-1')
+            lw, rebinned = pickle.load(f)
+            wlgrid = lw
+            per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+            r['exists'] = True
+    else:
+        print("Read & rebin:", path)
+        if not os.path.exists( path ):
+            print("WARNING: Did not find {}".format(path))
+        else:
+            hdu = fits.open(path)
+            lw, rebinned = get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 5500.)
+            if type(wlgrid) == type(None):
+                wlgrid = lw
+            try:
+                os.makedirs(rebin_path)
+            except:
+                pass
+            with open(os.path.join(rebin_path,rebin_filename), 'wb') as f:
+                # Pickle the 'data' dictionary using the highest protocol available.
+                pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
+
+            per_amp_sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+            r['exists'] = True
 
 per_amp_sky_spectra = np.array(per_amp_sky_spectra)
 per_shot_sky_spectra = {}
-# now average all sky spectra for each shot
+# now average all sky spectra for each shot 
 ut2 = table.unique(t, keys=['night', 'shotid'])
+ut1_ex = ut1[ut1['exists']]
 for r in ut2:
-    ii = ( ut1['night'] == r['night']) * (ut1['shotid'] == r['shotid'])
+    ii = ( ut1_ex['night'] == r['night']) * (ut1_ex['shotid'] == r['shotid'])
     ff = np.nanmedian(per_amp_sky_spectra[ii],axis=0)
     sout = Table([lw, ff], names=['wavelength', 'counts'], dtype=[float,float])
-    sout.write("{}v{}_sky.fits".format(r['night'], r['shotid']), format="fits")
+    sout.write("{}v{}_sky.fits".format(r['night'], r['shotid']), format="fits", overwrite=True)

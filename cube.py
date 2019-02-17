@@ -247,6 +247,9 @@ parser.add_argument('--shiftsdir', type=str, default="../shifts",
 parser.add_argument('--force_rebin', action="store_true",
                             help='Force rebinning rather then using prior cached rebinning results.')
 
+parser.add_argument('--no_pca_sky', action="store_true",
+                            help='Do NOT use PCA sky subtracted data even if found in the rebin directory.')
+
 parser.add_argument('--write_single_cubes', action="store_true",
                             help='Write individual per-shot cubes before median stacking.')
 
@@ -279,6 +282,7 @@ extensions = ["sky_subtracted", "sky_spectrum", "fiber_to_fiber"]
 #extension = "spectrum"
 
 force_rebin = args.force_rebin
+no_pca_sky = args.no_pca_sky
 fnout = args.fnout
 write_single_cubes = args.write_single_cubes
 norm_smoothing = args.norm_smoothing
@@ -313,6 +317,20 @@ import pickle
 # read spectra
 ###############################################################################
 
+def multifix(path):
+    h,t = os.path.split(path)
+    #multi_008_093_054_LL.fits 
+    ifu = t[10:13]
+    amp = t[18:20]
+    
+    pattern = os.path.join( h,"multi_???_{}_???_{}.fits".format(ifu,amp) )
+    ff = glob.glob(pattern)
+    if not len(ff) == 1:
+        print("Error, unable to identify correct multifits for ifu {} and amp {} in {}".format(ifu, amp, h))
+        return
+    else:
+        return ff[0]
+    
 for r in t:
     mf = prefix + r["multifits"]
     _ifuslot = r["ifuslot"].replace("ifu","")
@@ -335,7 +353,13 @@ for r in t:
     filename = mf[:-8] + ".fits"
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     path = os.path.join( basepath, s )
-
+    
+    
+    _path = multifix(path)
+    #if _path != path:
+    #    print("Fixed path for multifits from {} to {}".format(path, _path))
+    path = _path
+    
     # read spectrum if it was not read before
     if not path in spectra:
         rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
@@ -343,7 +367,7 @@ for r in t:
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
         pca_rebin_file_path = os.path.join(rebin_path,"pca_" + rebin_filename)
-        if os.path.exists( pca_rebin_file_path ) and not force_rebin:
+        if os.path.exists( pca_rebin_file_path ) and not force_rebin and not no_pca_sky:
             # already rebinned?
             with open( pca_rebin_file_path , 'rb') as f:
                 print("Found previously rebinned AND PCA SKY SUBTRACTED {}".format( pca_rebin_file_path )) 
@@ -354,12 +378,26 @@ for r in t:
                 print("wlgrid[0]", wlgrid[0])
         elif os.path.exists( rebin_file_path ) and not force_rebin:
             # already rebinned?
-            with open( rebin_file_path , 'rb') as f:
-                print("Found previously rebinned data {}".format( rebin_file_path )) 
-                # The protocol version used is detected automatically, so we do not
-                # have to specify it.
-                lw, rebinned = pickle.load(f)
-                wlgrid = lw
+            try:
+                with open( rebin_file_path , 'rb') as f:
+                    print("Found previously rebinned data {}".format( rebin_file_path )) 
+                    # The protocol version used is detected automatically, so we do not
+                    # have to specify it.
+                    lw, rebinned = pickle.load(f)
+                    wlgrid = lw
+            except:
+                print("Error opening picke file. Falling back to read & rebin:", path)
+                hdu = fits.open(path)
+                lw, rebinned = get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 5500.)
+                if type(wlgrid) == type(None):
+                    wlgrid = lw
+                try:
+                    os.makedirs(rebin_path)
+                except:
+                    pass
+                with open(os.path.join(rebin_path,rebin_filename), 'wb') as f:
+                    # Pickle the 'data' dictionary using the highest protocol available.
+                    pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
         else:
             print("Read & rebin:", path)
             hdu = fits.open(path)
@@ -402,8 +440,13 @@ for f in ff:
 
 print("Computing exposure to exposure normalisations")
 normalisations = []
-for sky_spectrum,shotid in zip(sky_spectra, sky_shotids):
-    print("    ", shotid )
+n = len(sky_spectra)
+for i,(sky_spectrum,shotid) in enumerate( zip(sky_spectra, sky_shotids) ):
+    if i % 10 == 0:
+        s = "i: %6d / %6d" % ( i,n )
+        sys.stdout.write( '\r'* len(s))
+        sys.stdout.write(s)
+        sys.stdout.flush()
     # protect against nans, giving it a very large value will normalize spectra to close to 0 
     sky_spectrum[np.isnan(sky_spectrum)] = 1e9 
 
@@ -420,6 +463,7 @@ print("Done, computing exposure to exposure normalisations")
 
 # fix inhomogeneous spectral lengths
 # Note: this is only ok if they have all the same starting wavelength
+print ([s.shape[0] for s in allspec])
 N = np.min([s.shape[0] for s in allspec])
 
 _allspec = []
