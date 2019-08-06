@@ -1,3 +1,4 @@
+
 # coding: utf-8
 from __future__ import print_function
 
@@ -17,6 +18,10 @@ from astropy.table import Table
 import os
 import glob
 import numpy as np
+import sys
+from astropy.table import Column, vstack
+from astropy.io import ascii
+
 
 from scipy.interpolate import UnivariateSpline
 
@@ -198,10 +203,6 @@ def get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 550
     return lw, rebinned
 
 
-import sys
-from astropy.table import Column, vstack
-from astropy.io import ascii
-
 def read_shotlist(shotlist_file):
     return Table(ascii.read(args.shotlist, format="fast_no_header"), names=["shots"])
 
@@ -243,17 +244,18 @@ parser.add_argument('--pa', type=float, default=0.,
                             help='Position angle for cube.')
 parser.add_argument('--shiftsdir', type=str, default="../shifts",
                             help='Directory that contains the astrometric solutions for each shot.')
+parser.add_argument('--dither_use', type=str,
+                            help='Combined dithall use file.')
 parser.add_argument('--force_rebin', action="store_true",
                             help='Force rebinning rather then using prior cached rebinning results.')
-
-parser.add_argument('--no_pca_sky', action="store_true",
-                            help='Do NOT use PCA sky subtracted data even if found in the rebin directory.')
+parser.add_argument('--no_pca', action="store_true",
+                            help='Force to not use PCA sky subtraction.')
 
 parser.add_argument('--write_single_cubes', action="store_true",
                             help='Write individual per-shot cubes before median stacking.')
 
 parser.add_argument('--norm_smoothing', type=float, default=0.005,
-                            help='Smoothing for cross IFU and cross exposure fiber to fiber normalisation (default 0.005)')
+                            help='Smoothing for cross IFU and cross exposure fiber to fiber normalisation (default 0.05)')
 
 parser.add_argument('--ifuslot', type=str, default = "022", nargs='+', metavar='SLOTS',
         help='IFUslot to create cube for, can pass multiple. ')
@@ -270,7 +272,7 @@ parser.add_argument('-o','--fnout', type=str, default="",
 args = parser.parse_args()
 
 pa=args.pa
-#fiberpos = args.dither_use
+fiberpos = args.dither_use
 #"/work/04287/mxhf/maverick/sci/panacea/shifts/deep_33.182404_262.562869.use"
 ifuslot = args.ifuslot
 #"022"
@@ -279,15 +281,6 @@ basepath = args.basepath
 prefix = ""
 extensions = ["sky_subtracted", "sky_spectrum", "fiber_to_fiber"]
 #extension = "spectrum"
-
-force_rebin = args.force_rebin
-no_pca_sky = args.no_pca_sky
-fnout = args.fnout
-write_single_cubes = args.write_single_cubes
-norm_smoothing = args.norm_smoothing
-global_sky_dir = args.global_sky_dir
-
-print("Test 2")
 
 
 shotlist = read_shotlist(args.shotlist)
@@ -316,24 +309,10 @@ import pickle
 # read spectra
 ###############################################################################
 
-def multifix(path):
-    h,t = os.path.split(path)
-    #multi_008_093_054_LL.fits 
-    ifu = t[10:13]
-    amp = t[18:20]
-    
-    pattern = os.path.join( h,"multi_???_{}_???_{}.fits".format(ifu,amp) )
-    ff = glob.glob(pattern)
-    if not len(ff) == 1:
-        print("Error, unable to identify correct multifits for ifu {} and amp {} in {}".format(ifu, amp, h))
-        return
-    else:
-        return ff[0]
-    
 for r in t:
     mf = prefix + r["multifits"]
     _ifuslot = r["ifuslot"].replace("ifu","")
-    if not _ifuslot in ifuslot:
+    if not _ifuslot in args.ifuslot:
         continue
     tt = mf.split("_")
     fiberid = int( tt[5][:3] ) - 1
@@ -352,13 +331,9 @@ for r in t:
     filename = mf[:-8] + ".fits"
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     path = os.path.join( basepath, s )
-    
-    
-    _path = multifix(path)
-    #if _path != path:
-    #    print("Fixed path for multifits from {} to {}".format(path, _path))
-    path = _path
-    
+
+    USE_PCA = False
+
     # read spectrum if it was not read before
     if not path in spectra:
         rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
@@ -366,7 +341,7 @@ for r in t:
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
         pca_rebin_file_path = os.path.join(rebin_path,"pca_" + rebin_filename)
-        if os.path.exists( pca_rebin_file_path ) and not force_rebin and not no_pca_sky:
+        if os.path.exists( pca_rebin_file_path ) and not args.force_rebin and not args.no_pca:
             # already rebinned?
             with open( pca_rebin_file_path , 'rb') as f:
                 print("Found previously rebinned AND PCA SKY SUBTRACTED {}".format( pca_rebin_file_path )) 
@@ -374,29 +349,15 @@ for r in t:
                 # have to specify it.
                 lw, rebinned = pickle.load(f)
                 wlgrid = lw
-                print("wlgrid[0]", wlgrid[0])
-        elif os.path.exists( rebin_file_path ) and not force_rebin:
+                USE_PCA = False
+        elif os.path.exists( rebin_file_path ) and not args.force_rebin:
             # already rebinned?
-            try:
-                with open( rebin_file_path , 'rb') as f:
-                    print("Found previously rebinned data {}".format( rebin_file_path )) 
-                    # The protocol version used is detected automatically, so we do not
-                    # have to specify it.
-                    lw, rebinned = pickle.load(f)
-                    wlgrid = lw
-            except:
-                print("Error opening picke file. Falling back to read & rebin:", path)
-                hdu = fits.open(path)
-                lw, rebinned = get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 5500.)
-                if type(wlgrid) == type(None):
-                    wlgrid = lw
-                try:
-                    os.makedirs(rebin_path)
-                except:
-                    pass
-                with open(os.path.join(rebin_path,rebin_filename), 'wb') as f:
-                    # Pickle the 'data' dictionary using the highest protocol available.
-                    pickle.dump((lw, rebinned), f, pickle.HIGHEST_PROTOCOL)
+            with open( rebin_file_path , 'rb') as f:
+                print("Found previously rebinned data {}".format( rebin_file_path )) 
+                # The protocol version used is detected automatically, so we do not
+                # have to specify it.
+                lw, rebinned = pickle.load(f)
+                wlgrid = lw
         else:
             print("Read & rebin:", path)
             hdu = fits.open(path)
@@ -414,21 +375,37 @@ for r in t:
         spectra[path] = rebinned
 
     fibers.add_row([count,amplifier,fiberid, x,y, shot, int(night), int(shotid), int(exp[3:]) ])
-    allspec.append(spectra[path]["sky_subtracted"][fiberid,:])
+    if USE_PCA:
+        allspec.append(spectra[path]["pca_sky_subtracted"][fiberid,:])
+    else:
+        allspec.append(spectra[path]["sky_subtracted"][fiberid,:])
     count += 1
 
 
-    sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+    if USE_PCA:
+        sky_spectra.append( np.nanmedian( rebinned['pca_sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+    else:
+        sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
     sky_shotids.append( shot )
 
+
+
+
 allspec = np.array(allspec)
+
+# fix inhomogenous array lengths
+_allspec = np.zeros([len(allspec), np.max( np.unique( [len(a) for a in allspec] ) ) ])
+for i,a in enumerate(allspec):
+    _allspec[i,0:len(a)] = a
+allspec = _allspec
+
 sky_spectra = np.array(sky_spectra)
 #global_sky = np.nanmedian( sky_spectra, axis=0 )
 
 
 # load global skys
 print("Loading global skys")
-global_sky_dir = global_sky_dir
+global_sky_dir = args.global_sky_dir
 global_skys = {}
 ff = glob.glob(os.path.join(global_sky_dir, "20??????v???_sky.fits"))
 for f in ff:
@@ -439,39 +416,26 @@ for f in ff:
 
 print("Computing exposure to exposure normalisations")
 normalisations = []
-n = len(sky_spectra)
-for i,(sky_spectrum,shotid) in enumerate( zip(sky_spectra, sky_shotids) ):
-    if i % 10 == 0:
-        s = "i: %6d / %6d" % ( i,n )
-        sys.stdout.write( '\r'* len(s))
-        sys.stdout.write(s)
-        sys.stdout.flush()
+
+nsky_spectra = len(sky_spectra)
+for i,(sky_spectrum,shotid) in enumerate(zip(sky_spectra, sky_shotids)):
+    print("Progress {:2.1%}".format(i / nsky_spectra), end="\r")
+
     # protect against nans, giving it a very large value will normalize spectra to close to 0 
     sky_spectrum[np.isnan(sky_spectrum)] = 1e9 
 
     global_sky = global_skys[shotid]['counts']
-    N = min(len(wlgrid), len(sky_spectrum), len(global_sky))
 
-    f = UnivariateSpline(wlgrid[:N], sky_spectrum[:N]/ global_sky[:N], s=norm_smoothing)
+
+    N = np.min([len(wlgrid), len(sky_spectrum), len(global_sky)]) # uh no, horrendous hack, to fix inhomogenous array lengths
+    f = UnivariateSpline(wlgrid[:N], sky_spectrum[:N]/ global_sky[:N], s=args.norm_smoothing)
     normalisations.append(f(wlgrid))
+print("")
 
 normalisations = np.array(normalisations)
 
+
 shots = np.unique(fibers["shot"])
-print("Done, computing exposure to exposure normalisations")
-
-# fix inhomogeneous spectral lengths
-# Note: this is only ok if they have all the same starting wavelength
-print ([s.shape[0] for s in allspec])
-N = np.min([s.shape[0] for s in allspec])
-
-_allspec = []
-for s in allspec:
-    _allspec.append(s[:N])
-    
-allspec = np.array(_allspec)
-
-wlgrid = wlgrid[:N]
 
 ###############################################################################
 # determine a pixel grid
@@ -525,6 +489,9 @@ if PLOT:
     s.set_xlabel("x (\")")
     s.set_ylabel("y (\")")
     s.axis('equal')
+
+
+# In[153]:
 
 
 ###############################################################################
@@ -731,7 +698,7 @@ for shot in shots:
         hdu = fits.PrimaryHDU(nI,h)
         hdu.writeto("fiber_weights_{}.fits.gz".format(ifuslot[0]),overwrite=True)
 
-    if write_single_cubes:
+    if args.write_single_cubes:
         #if options.normexptime:
         #    h.add_history("Cube data has been normalized by its exposure time.")
         hdu = fits.PrimaryHDU(cube[shot],h)
@@ -744,7 +711,7 @@ mc = np.median(cc, axis=0)
 hdu = fits.PrimaryHDU(mc,h)
 
 
-if fnout == "":
-    fnout = "outcube_{}_{}.fits.gz".format("median",ifuslot[0])
-hdu.writeto(fnout,overwrite=True)
-print("Done.")
+if args.fnout == "":
+    args.fnout = "outcube_{}_{}.fits.gz".format("median",ifuslot[0])
+hdu.writeto(args.fnout,overwrite=True)
+
