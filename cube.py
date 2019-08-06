@@ -349,7 +349,7 @@ for r in t:
                 # have to specify it.
                 lw, rebinned = pickle.load(f)
                 wlgrid = lw
-                USE_PCA = False
+                USE_PCA = True
         elif os.path.exists( rebin_file_path ) and not args.force_rebin:
             # already rebinned?
             with open( rebin_file_path , 'rb') as f:
@@ -376,6 +376,7 @@ for r in t:
 
     fibers.add_row([count,amplifier,fiberid, x,y, shot, int(night), int(shotid), int(exp[3:]) ])
     if USE_PCA:
+        print("1 pca_sky_subtracted")
         allspec.append(spectra[path]["pca_sky_subtracted"][fiberid,:])
     else:
         allspec.append(spectra[path]["sky_subtracted"][fiberid,:])
@@ -383,6 +384,7 @@ for r in t:
 
 
     if USE_PCA:
+        print("2 pca_sky_spectrum")
         sky_spectra.append( np.nanmedian( rebinned['pca_sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
     else:
         sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
