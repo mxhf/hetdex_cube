@@ -22,12 +22,11 @@ import sys
 from astropy.table import Column, vstack
 from astropy.io import ascii
 from collections import OrderedDict
-
 from scipy.interpolate import UnivariateSpline
-
+import argparse
+import pickle
 import srebin
 
-# In[146]:
 
 
 def circle(x,y,size):
@@ -90,6 +89,7 @@ def create_2D_header(xc, yc, rad, decd, pixelsize):
     h["CUNIT2"] = "deg"
     return h
 
+
 def create_I_header():
     h = fits.Header()
     #h.update("WAT1_001", "wtype=tan axtype=ra", "");
@@ -105,6 +105,7 @@ def create_I_header():
     h["CDELT2"] = 1.
     h["CUNIT2"] = "fib"
     return h
+
 
 def tan_dir_sci(RA0, DEC0, PA0, RA,DEC, quiet=True):
     """
@@ -146,6 +147,7 @@ def tan_dir_sci(RA0, DEC0, PA0, RA,DEC, quiet=True):
 
     return - pixx/pi*180.*3600., pixy/pi*180.*3600.
 
+
 def findZeroPixRaDec(x,y, RA0, DEC0):
     """
     Find RA and DEC coordinates that correspond to the given
@@ -165,18 +167,17 @@ def findZeroPixRaDec(x,y, RA0, DEC0):
     bestfit = optimize.leastsq(resid, p0, args=(x,y,RA0,DEC0) )
     return bestfit[0]
 
+
 def hms2deg(hms):
     tt = hms.split(":")
     h,m,s = float(tt[0]), float(tt[1]), float(tt[2])
     return h*15. + m/4. + s/240.
 
+
 def dms2deg(dms):
     tt = dms.split(":")
     d,m,s = float(tt[0]), float(tt[1]), float(tt[2])
     return d + m/60. + s/3600.
-
-
-# In[147]:
 
 
 def get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 5500.):
@@ -205,6 +206,7 @@ def get_rebinned(hdu, extensions, start = 3494.74, step =  1.9858398, stop = 550
 
 def read_shotlist(shotlist_file):
     return Table(ascii.read(args.shotlist, format="fast_no_header"), names=["shots"])
+
 
 def combine_dithall(shotlist, shifts_dir):
     tables = []
@@ -235,10 +237,8 @@ pixelsize = .5
 
 fiberA = pi*(FIBERD/2.)**2.
 
-import argparse
 
 parser = argparse.ArgumentParser(description='Build a hetdex cube.')
-#parser.add_argument('--basepath', default="/work/03946/hetdex/maverick/red1/reductions")
 parser.add_argument('--basepath', default="../reductions")
 parser.add_argument('--pa', type=float, default=0.,
                             help='Position angle for cube.')
@@ -288,22 +288,19 @@ t = combine_dithall(shotlist, args.shiftsdir)
 
 # read dithall.use
 filebase = {}
-spectra = {}
+spectra = OrderedDict()
 exposure_times = []
 allspec = []
-sky_spectra = [] # holds for each fiber spectrum
+sky_spectra = OrderedDict() # holds for each fiber spectrum
                  # the corresponing amplifier wide sky (median accorss all fibers after correcting for fiber_to_fiber)
 sky_shotids = [] # holds the shot and shotid for each sky spectrum
 wlgrid = None
 names = ["count", "amplifier", "fiberid", "ra", "dec", "shot", "night", "shotid", "exp"]
-dtype = [int, 'U2', int, float, float, 'U12', 'U8', 'U3', 'U6']
+dtype = [int, 'U2', int, float, float, 'U12', 'U8', 'U3', int]
 fibers = Table(names=names, dtype=dtype)
 
 count = 0
 fid = -1
-
-import pickle
-
 
 ###############################################################################
 # read spectra
@@ -318,6 +315,7 @@ for r in t:
     fiberid = int( tt[5][:3] ) - 1
     amplifier = mf[-10:-8]
     exp = r["exposure"]
+    iexp = int( r["exposure"][-2:] )
     night = r["night"]
     shotid = "{}".format( r["shotid"] )
     shot =  "{}v{}".format(night,shotid)
@@ -331,8 +329,6 @@ for r in t:
     filename = mf[:-8] + ".fits"
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     path = os.path.join( basepath, s )
-
-    USE_PCA = False
 
     # read spectrum if it was not read before
     if not path in spectra:
@@ -349,7 +345,6 @@ for r in t:
                 # have to specify it.
                 lw, rebinned = pickle.load(f)
                 wlgrid = lw
-                USE_PCA = True
         elif os.path.exists( rebin_file_path ) and not args.force_rebin:
             # already rebinned?
             with open( rebin_file_path , 'rb') as f:
@@ -376,22 +371,16 @@ for r in t:
 
     fibers.add_row([count,amplifier,fiberid, x,y, shot, int(night), int(shotid), int(exp[3:]) ])
     count += 1
-    if USE_PCA:
-        print("1 pca_sky_subtracted")
+
+    if ("pca_sky_subtracted" in spectra[path]) and ("pca_sky_spectrum" in spectra[path]):
         allspec.append(spectra[path]["pca_sky_subtracted"][fiberid,:])
+        if not (shot,iexp,amplifier) in sky_spectra:
+            sky_spectra[(shot,iexp,amplifier)] = np.nanmedian( spectra[path]['pca_sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) 
     else:
         allspec.append(spectra[path]["sky_subtracted"][fiberid,:])
-
-
-    if USE_PCA:
-        print("2 pca_sky_spectrum")
-        sky_spectra.append( np.nanmedian( spectra[path]['pca_sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) )
-    else:
-        sky_spectra.append( np.nanmedian( spectra[path]['sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) )
+        if not (shot,iexp,amplifier) in sky_spectra:
+            sky_spectra[(shot,iexp,amplifier)] = np.nanmedian( spectra[path]['sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) 
     sky_shotids.append( shot )
-
-
-
 
 allspec = np.array(allspec)
 
@@ -400,9 +389,6 @@ _allspec = np.zeros([len(allspec), np.max( np.unique( [len(a) for a in allspec] 
 for i,a in enumerate(allspec):
     _allspec[i,0:len(a)] = a
 allspec = _allspec
-
-sky_spectra = np.array(sky_spectra)
-#global_sky = np.nanmedian( sky_spectra, axis=0 )
 
 
 # load global skys
@@ -416,24 +402,29 @@ for f in ff:
     print("    ", shotid)
     global_skys[shotid] = fits.getdata(f)
 
-print("Computing exposure to exposure normalisations")
-normalisations = []
 
-nsky_spectra = len(sky_spectra)
-for i,(sky_spectrum,shotid) in enumerate(zip(sky_spectra, sky_shotids)):
+print("Computing exposure to exposure normalisations")
+normalisations = np.zeros_like(allspec)
+
+nsky_spectra = len(sky_spectra.keys())
+for i,(shot,iexp,amplifier) in enumerate(sky_spectra):
     print("Progress {:2.1%}".format(i / nsky_spectra), end="\r")
 
-    # protect against nans, giving it a very large value will normalize spectra to close to 0 
-    sky_spectrum[np.isnan(sky_spectrum)] = 1e9 
+    sky_spectrum = sky_spectra[(shot,iexp,amplifier)]
 
-    global_sky = global_skys[shotid]['counts']
+    # protect against nans, giving it a very large value will normalize spectra to close to 0 
+    sky_spectrum[np.isnan(sky_spectrum)] = 1e9
+
+    global_sky = global_skys[shot]['counts']
 
     N = np.min([len(wlgrid), len(sky_spectrum), len(global_sky)]) # uh no, horrendous hack, to fix inhomogenous array lengths
     f = UnivariateSpline(wlgrid[:N], sky_spectrum[:N]/ global_sky[:N], s=args.norm_smoothing)
-    normalisations.append(f(wlgrid))
-print("")
 
-normalisations = np.array(normalisations)
+    ii = (fibers["shot"] == shot) * (fibers["exp"] == iexp) * (fibers["amplifier"] == amplifier)
+
+    print("Setting normalisations for shot,iexp,amplifier = ", shot,iexp,amplifier, " number of fibers =", sum(ii))
+    normalisations[ii] = f(wlgrid)
+print("")
 
 with open('normalisations.pickle', 'wb') as f:
     # Pickle the 'data' dictionary using the highest protocol available.
