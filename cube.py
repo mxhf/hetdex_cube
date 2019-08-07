@@ -21,7 +21,7 @@ import numpy as np
 import sys
 from astropy.table import Column, vstack
 from astropy.io import ascii
-
+from collections import OrderedDict
 
 from scipy.interpolate import UnivariateSpline
 
@@ -375,19 +375,19 @@ for r in t:
         spectra[path] = rebinned
 
     fibers.add_row([count,amplifier,fiberid, x,y, shot, int(night), int(shotid), int(exp[3:]) ])
+    count += 1
     if USE_PCA:
         print("1 pca_sky_subtracted")
         allspec.append(spectra[path]["pca_sky_subtracted"][fiberid,:])
     else:
         allspec.append(spectra[path]["sky_subtracted"][fiberid,:])
-    count += 1
 
 
     if USE_PCA:
         print("2 pca_sky_spectrum")
-        sky_spectra.append( np.nanmedian( rebinned['pca_sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+        sky_spectra.append( np.nanmedian( spectra[path]['pca_sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) )
     else:
-        sky_spectra.append( np.nanmedian( rebinned['sky_spectrum']/rebinned['fiber_to_fiber'], axis=0 ) )
+        sky_spectra.append( np.nanmedian( spectra[path]['sky_spectrum']/spectra[path]['fiber_to_fiber'], axis=0 ) )
     sky_shotids.append( shot )
 
 
@@ -408,7 +408,7 @@ sky_spectra = np.array(sky_spectra)
 # load global skys
 print("Loading global skys")
 global_sky_dir = args.global_sky_dir
-global_skys = {}
+global_skys = OrderedDict()
 ff = glob.glob(os.path.join(global_sky_dir, "20??????v???_sky.fits"))
 for f in ff:
     __,t = os.path.split(f)
@@ -428,7 +428,6 @@ for i,(sky_spectrum,shotid) in enumerate(zip(sky_spectra, sky_shotids)):
 
     global_sky = global_skys[shotid]['counts']
 
-
     N = np.min([len(wlgrid), len(sky_spectrum), len(global_sky)]) # uh no, horrendous hack, to fix inhomogenous array lengths
     f = UnivariateSpline(wlgrid[:N], sky_spectrum[:N]/ global_sky[:N], s=args.norm_smoothing)
     normalisations.append(f(wlgrid))
@@ -436,6 +435,9 @@ print("")
 
 normalisations = np.array(normalisations)
 
+with open('normalisations.pickle', 'wb') as f:
+    # Pickle the 'data' dictionary using the highest protocol available.
+    pickle.dump(normalisations, f, pickle.HIGHEST_PROTOCOL)
 
 shots = np.unique(fibers["shot"])
 
