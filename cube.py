@@ -246,6 +246,8 @@ parser.add_argument('--shiftsdir', type=str, default="../shifts",
                             help='Directory that contains the astrometric solutions for each shot.')
 parser.add_argument('--dither_use', type=str,
                             help='Combined dithall use file.')
+parser.add_argument('--dir_rebin', type=str, default="/scratch/04287/mxhf/rebin2",
+                            help='Rebin directory.')
 parser.add_argument('--force_rebin', action="store_true",
                             help='Force rebinning rather then using prior cached rebinning results.')
 parser.add_argument('--no_pca', action="store_true",
@@ -281,7 +283,7 @@ basepath = args.basepath
 prefix = ""
 extensions = ["sky_subtracted", "sky_spectrum", "fiber_to_fiber"]
 #extension = "spectrum"
-
+dir_rebin = args.dir_rebin
 
 shotlist = read_shotlist(args.shotlist)
 t = combine_dithall(shotlist, args.shiftsdir)
@@ -327,16 +329,21 @@ for r in t:
     y = r["dec"]
     date = r["timestamp"][:8]
     filename = mf[:-8] + ".fits"
+    # hack to deal with new filename scheme
+    tt = filename.split("_")
+    tt[1] = 'xxx'
+    tt[3] = 'xxx'
+    filename = "_".join(tt)
     s= "{}/virus/virus0000{}/{}/virus/{}".format(night, shotid, exp, filename)
     path = os.path.join( basepath, s )
 
     # read spectrum if it was not read before
     if not path in spectra:
-        rebin_path = "rebin/{}v{}/{}".format(night, shotid, exp)
-
+        rebin_path = "{}/{}v{}/{}".format(dir_rebin, night, shotid, exp)
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
         pca_rebin_file_path = os.path.join(rebin_path,"pca_" + rebin_filename)
+        print("Checking for existing pca rebin file in [{}]".format(pca_rebin_file_path))
         if os.path.exists( pca_rebin_file_path ) and not args.force_rebin and not args.no_pca:
             # already rebinned?
             with open( pca_rebin_file_path , 'rb') as f:
@@ -463,7 +470,7 @@ else:
     xx *= pixelsize
     yy *= pixelsize
 
-X,Y=meshgrid(xx,yy)
+X,Y= meshgrid(xx,yy)
 pixels = zeros( [ len(X.flatten()) ,3]  ) 
 pixels[:,0] = arange(len(pixels))
 pixels[:,1] = X.flatten()
