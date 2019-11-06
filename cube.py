@@ -343,7 +343,7 @@ for r in t:
         rebin_filename = filename.replace(".fits","_rebin.pickle")
         rebin_file_path = os.path.join(rebin_path,rebin_filename)
         pca_rebin_file_path = os.path.join(rebin_path,"pca_" + rebin_filename)
-        print("Checking for existing pca rebin file in [{}]".format(pca_rebin_file_path))
+        print("Checking for existing rebin file in [{}] or [{}] = {},{}".format(rebin_file_path, pca_rebin_file_path, os.path.exists( rebin_file_path ), os.path.exists( pca_rebin_file_path )) )
         if os.path.exists( pca_rebin_file_path ) and not args.force_rebin and not args.no_pca:
             # already rebinned?
             with open( pca_rebin_file_path , 'rb') as f:
@@ -668,7 +668,7 @@ for shot in shots:
                         #s.text(fx,fy,"{:d}".format(int(ifib) ))
                     plt.show()
 
-            cube[shot][iwl] = im2
+            cube[shot][iwl] += im2
 
         print("")
 
@@ -691,7 +691,7 @@ h2d = create_2D_header(xc, yc, RA0, DEC0, pixelsize)
 h = create_3D_header(xc, yc, RA0, DEC0, pixelsize,wstart,wstep)
 
 for shot in shots:
-    print("shot {}".format(shot))
+    print("Saving pixel wieghts for shot {}".format(shot))
     hdu = fits.PrimaryHDU(W[shot].reshape(X.shape),h2d)
     hdu.writeto("pixel_weights_{}_{}.fits.gz".format(shot,ifuslot[0]),overwrite=True)
 
